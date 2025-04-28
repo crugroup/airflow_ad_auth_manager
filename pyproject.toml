@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "airflow-azure-auth-manager"
+version = "0.1.0"
+description = "Azure AD Auth Manager for Apache Airflow 3.x"
+authors = [
+    { name = "Your Name", email = "your@email.com" }
+]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "apache-airflow>=3.0.0",
+    "PyJWT>=2.0.0",
+    "requests>=2.0.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/airflow-azure-auth-manager"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["airflow_azure_auth_manager*"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "DJ",
+    "F",
+    "I",
+    "UP",
+    "PL",
+    "B",
+    "Q",
+]
+
+[tool.ruff.lint.pylint]
+max-args = 10
+max-branches = 13
