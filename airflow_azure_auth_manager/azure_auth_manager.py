@@ -94,7 +94,7 @@ class AzureADAuthManager(BaseAuthManager):
             return RedirectResponse(authorize_url)
 
         @router.get("/callback")
-        async def callback(request: Request, code: str = None, state: str = None):
+        async def callback(request: Request, code: str = None, state: str = None):  # noqa: PLR0911
             if not code:
                 return HTMLResponse("Missing code", status_code=400)
             redirect_uri = str(request.url_for("callback"))
@@ -109,7 +109,7 @@ class AzureADAuthManager(BaseAuthManager):
             resp = requests.post(token_url, data=data)
             if resp.status_code != 200:  # noqa: PLR2004
                 return HTMLResponse("Token exchange failed", status_code=400)
-            
+
             tokens = resp.json()
             access_token = tokens.get("access_token")
             if not access_token:
@@ -117,7 +117,7 @@ class AzureADAuthManager(BaseAuthManager):
             id_token = tokens.get("id_token")
             if not id_token:
                 return HTMLResponse("No ID token", status_code=400)
-            
+
             # Try tenant-specific JWKS first
             jwks_urls = [
                 f"https://login.microsoftonline.com/{self.tenant_id}/discovery/v2.0/keys",
@@ -125,9 +125,9 @@ class AzureADAuthManager(BaseAuthManager):
             ]
             validated = False
             for jwks_url in jwks_urls:
-                logger.info("Trying JWKS URL:", jwks_url)
+                logger.info(f"Trying JWKS URL: {jwks_url}")
                 jwk_client = PyJWKClient(jwks_url)
-                
+
                 try:
                     signing_key = jwk_client.get_signing_key_from_jwt(id_token)
                     claims = jwt.decode(
@@ -138,29 +138,25 @@ class AzureADAuthManager(BaseAuthManager):
                         options={"verify_exp": True, "verify_aud": True},
                     )
                     validated = True
-                    logger.info("Azure token validated", jwks_url)
+                    logger.info("Azure token validated")
                     break
                 except InvalidTokenError as e:
                     logger.error(f"Azure token validation failed with JWKS {jwks_url}: {e}")
                 except Exception:
-                    logger.exception(f"Unexpected error during token validation")
-            
+                    logger.exception("Unexpected error during token validation")
+
             if not validated:
                 return HTMLResponse("Azure token validation failed: Signature verification failed", status_code=400)
-            
-            graph_url = "https://graph.microsoft.com/v1.0/me/memberOf"
-            headers = {"Authorization": f"Bearer {access_token}"}
-            resp = requests.get(graph_url, headers=headers)
-            if resp.status_code != 200:
-                logger.error(f"Failed to fetch groups from Microsoft Graph: {resp.text}")
-                return HTMLResponse("Failed to fetch user groups", status_code=400)
-            group_data = resp.json()
-            group_guids = [group["id"] for group in group_data.get("value", []) if "id" in group]
-            
+
+            try:
+                group_guids = self._fetch_group_ids(access_token)
+            except Exception as e:
+                return HTMLResponse(str(e), status_code=400)
+
             username, email, _ = self._extract_user_info(claims)
             role = self.get_user_role(group_guids)
             user = AzureAuthManagerUser(username=username, email=email, role=role)
-            
+
             jwt_token = self.generate_jwt(user)
             response = RedirectResponse(url="/")
             secure = bool(conf.get("api", "ssl_cert", fallback=""))
@@ -176,6 +172,19 @@ class AzureADAuthManager(BaseAuthManager):
 
         app.include_router(router)
         return app
+
+    def _fetch_group_ids(self, access_token: str) -> List[str]:
+        """
+        Fetch group IDs from Microsoft Graph API using the provided access token.
+        """
+        graph_url = "https://graph.microsoft.com/v1.0/me/memberOf"
+        headers = {"Authorization": f"Bearer {access_token}"}
+        resp = requests.get(graph_url, headers=headers)
+        if resp.status_code != 200:  # noqa: PLR2004
+            logger.error(f"Failed to fetch groups from Microsoft Graph: {resp.text}")
+            raise Exception("Failed to fetch user groups")
+        group_data = resp.json()
+        return [group["id"] for group in group_data.get("value", []) if "id" in group]
 
     def get_user_role(self, group_guids: List[str]) -> str:
         """
