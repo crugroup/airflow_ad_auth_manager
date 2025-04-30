@@ -54,7 +54,7 @@ class AzureADAuthManager(BaseAuthManager):
         self.tenant_id = conf.get("azure_auth_manager", "tenant_id")
         self.client_id = conf.get("azure_auth_manager", "client_id")
         self.client_secret = conf.get("azure_auth_manager", "client_secret")
-        self.api_secret_key = conf.get("azure_auth_manager", "api_secret_key")
+        self.api_secret_key = conf.get("azure_auth_manager", "api_secret_key", fallback=None)
         self.jwks_uri = conf.get(
             "azure_auth_manager", "jwks_uri", fallback="https://login.microsoftonline.com/common/discovery/v2.0/keys"
         )
@@ -140,6 +140,8 @@ class AzureADAuthManager(BaseAuthManager):
             """
             API login endpoint that validates username and api_key.
             """
+            if not self.api_secret_key:
+                raise HTTPException(status_code=400, detail="API authentication is not enabled")
             if not request.username or not request.api_key:
                 raise HTTPException(status_code=400, detail="Username and API key are required")
 
