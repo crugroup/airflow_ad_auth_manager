@@ -7,7 +7,8 @@ name = "airflow-azure-auth-manager"
 version = "0.1.0"
 description = "Azure AD Auth Manager for Apache Airflow 3.x"
 authors = [
-    { name = "Your Name", email = "your@email.com" }
+    { name = "Marcin Szymanski", email = "marcin.szymanski@crugroup.com" },
+    { name = "Zakariah Nuccio", email = "zak.nuccio@crugroup.com" },
 ]
 readme = "README.md"
 requires-python = ">=3.8"
@@ -18,7 +19,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/airflow-azure-auth-manager"
+Homepage = "https://github.com/crugroup/airflow-azure-auth-manager"
 
 [tool.setuptools.packages.find]
 where = ["."]
