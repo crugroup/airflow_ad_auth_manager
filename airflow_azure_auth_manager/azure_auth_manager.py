@@ -1,6 +1,7 @@
 import logging
 import urllib.parse
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any, Dict, List, Tuple
 
 import jwt
@@ -8,10 +9,11 @@ import requests
 from airflow.api_fastapi.auth.managers.base_auth_manager import COOKIE_NAME_JWT_TOKEN, BaseAuthManager
 from airflow.api_fastapi.auth.managers.models.base_user import BaseUser
 from airflow.configuration import conf
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from fastapi.routing import APIRouter
 from jwt import InvalidTokenError, PyJWKClient
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,11 @@ class AzureAuthManagerUser(BaseUser):
         return self.role
 
 
+class LoginRequest(BaseModel):
+    username: str
+    api_key: str
+
+
 class AzureADAuthManager(BaseAuthManager):
     """
     Airflow 3 Auth Manager for Azure AD authentication using access tokens.
@@ -47,6 +54,7 @@ class AzureADAuthManager(BaseAuthManager):
         self.tenant_id = conf.get("azure_auth_manager", "tenant_id")
         self.client_id = conf.get("azure_auth_manager", "client_id")
         self.client_secret = conf.get("azure_auth_manager", "client_secret")
+        self.api_secret_key = conf.get("azure_auth_manager", "api_secret_key")
         self.jwks_uri = conf.get(
             "azure_auth_manager", "jwks_uri", fallback="https://login.microsoftonline.com/common/discovery/v2.0/keys"
         )
@@ -94,29 +102,11 @@ class AzureADAuthManager(BaseAuthManager):
             return RedirectResponse(authorize_url)
 
         @router.get("/callback")
-        async def callback(request: Request, code: str = None, state: str = None):  # noqa: PLR0911
+        async def callback(request: Request, code: str = None, state: str = None):
             if not code:
-                return HTMLResponse("Missing code", status_code=400)
+                raise HTTPException(status_code=400, detail="Missing code")
             redirect_uri = str(request.url_for("callback"))
-            token_url = f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/token"
-            data = {
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": redirect_uri,
-            }
-            resp = requests.post(token_url, data=data)
-            if resp.status_code != 200:  # noqa: PLR2004
-                return HTMLResponse("Token exchange failed", status_code=400)
-
-            tokens = resp.json()
-            access_token = tokens.get("access_token")
-            if not access_token:
-                return HTMLResponse("No access token", status_code=400)
-            id_token = tokens.get("id_token")
-            if not id_token:
-                return HTMLResponse("No ID token", status_code=400)
+            access_token, id_token = self._exchange_code_for_tokens(code, redirect_uri)
 
             # Try tenant-specific JWKS first
             jwks_urls = [
@@ -124,54 +114,97 @@ class AzureADAuthManager(BaseAuthManager):
                 "https://login.microsoftonline.com/common/discovery/v2.0/keys",
             ]
             validated = False
+            claims = {}
             for jwks_url in jwks_urls:
-                logger.info(f"Trying JWKS URL: {jwks_url}")
-                jwk_client = PyJWKClient(jwks_url)
-
-                try:
-                    signing_key = jwk_client.get_signing_key_from_jwt(id_token)
-                    claims = jwt.decode(
-                        id_token,
-                        signing_key.key,
-                        algorithms=["RS256"],
-                        audience=self.client_id,
-                        options={"verify_exp": True, "verify_aud": True},
-                    )
-                    validated = True
-                    logger.info("Azure token validated")
+                validated, claims = self._validate_token_with_jwks(id_token, jwks_url)
+                if validated:
                     break
-                except InvalidTokenError as e:
-                    logger.error(f"Azure token validation failed with JWKS {jwks_url}: {e}")
-                except Exception:
-                    logger.exception("Unexpected error during token validation")
 
             if not validated:
-                return HTMLResponse("Azure token validation failed: Signature verification failed", status_code=400)
+                raise HTTPException(
+                    status_code=400, detail="Azure token validation failed: Signature verification failed"
+                )
 
             try:
                 group_guids = self._fetch_group_ids(access_token)
             except Exception as e:
-                return HTMLResponse(str(e), status_code=400)
+                raise HTTPException(status_code=400, detail=str(e)) from e
 
             username, email, _ = self._extract_user_info(claims)
             role = self.get_user_role(group_guids)
             user = AzureAuthManagerUser(username=username, email=email, role=role)
+            return self._generate_jwt_response(user)
 
-            jwt_token = self.generate_jwt(user)
-            response = RedirectResponse(url="/")
-            secure = bool(conf.get("api", "ssl_cert", fallback=""))
-            response.set_cookie(
-                COOKIE_NAME_JWT_TOKEN,
-                jwt_token,
-                secure=secure,
-                httponly=False,  # Must be False so UI can read it
-                samesite="lax",
-                path="/",
-            )
-            return response
+        @router.post("/api_login")
+        async def api_login(request: LoginRequest):
+            """
+            API login endpoint that validates username and api_key.
+            """
+            if not request.username or not request.api_key:
+                raise HTTPException(status_code=400, detail="Username and API key are required")
+
+            username = request.username
+            api_key = request.api_key.lower()
+            api_key_role = None
+
+            for role in self._role_order:
+                hash = sha256()
+                hash.update((username + self.api_secret_key + role).encode("utf-8"))
+                if hash.hexdigest().lower() == api_key:
+                    logger.info(f"Authenticated user {username} with role {role}")
+                    api_key_role = role
+                    break
+            else:
+                raise HTTPException(status_code=401, detail="Invalid API key")
+
+            user = AzureAuthManagerUser(username=username, email="", role=api_key_role)
+            return self._generate_jwt_response(user)
 
         app.include_router(router)
         return app
+
+    def _exchange_code_for_tokens(self, code: str, redirect_uri: str) -> Tuple[str, str]:
+        """
+        Exchange the authorization code for access and ID tokens.
+        """
+        token_url = f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/token"
+        data = {
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+        }
+        resp = requests.post(token_url, data=data)
+        if resp.status_code != 200:  # noqa: PLR2004
+            raise HTTPException(status_code=400, detail="Token exchange failed")
+
+        tokens = resp.json()
+        access_token = tokens.get("access_token")
+        if not access_token:
+            raise HTTPException(status_code=400, detail="No access token")
+        id_token = tokens.get("id_token")
+        if not id_token:
+            raise HTTPException(status_code=400, detail="No ID token")
+
+        return access_token, id_token
+
+    def _generate_jwt_response(self, user: AzureAuthManagerUser) -> RedirectResponse:
+        """
+        Generate a JWT token for the user and return a RedirectResponse with the token set as a cookie.
+        """
+        jwt_token = self.generate_jwt(user)
+        response = RedirectResponse(url="/")
+        secure = bool(conf.get("api", "ssl_cert", fallback=""))
+        response.set_cookie(
+            COOKIE_NAME_JWT_TOKEN,
+            jwt_token,
+            secure=secure,
+            httponly=False,  # Must be False so UI can read it
+            samesite="lax",
+            path="/",
+        )
+        return response
 
     def _fetch_group_ids(self, access_token: str) -> List[str]:
         """
@@ -195,20 +228,6 @@ class AzureADAuthManager(BaseAuthManager):
                 return self.group_role_map[group]
         return self.default_role
 
-    def _validate_jwt(self, token: str) -> Dict[str, Any]:
-        """
-        Validate JWT using Azure AD JWKS. Returns claims if valid, raises if not.
-        """
-        signing_key = self.jwk_client.get_signing_key_from_jwt(token)
-        claims = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["RS256"],
-            audience=self.client_id,
-            options={"verify_exp": True, "verify_aud": True},
-        )
-        return claims
-
     def _extract_user_info(self, claims: Dict[str, Any]) -> Tuple[str, str, List[str]]:
         """
         Extract username, email, and group GUIDs from JWT claims.
@@ -220,6 +239,29 @@ class AzureADAuthManager(BaseAuthManager):
             group_guids = []
         return username, email, group_guids
 
+    def _validate_token_with_jwks(self, id_token: str, jwks_url: str) -> Tuple[bool, Dict[str, Any]]:
+        """
+        Validate the ID token using the JWKS URL and return the validation status and claims.
+        """
+        try:
+            logger.info(f"Trying JWKS URL: {jwks_url}")
+            jwk_client = PyJWKClient(jwks_url)
+            signing_key = jwk_client.get_signing_key_from_jwt(id_token)
+            claims = jwt.decode(
+                id_token,
+                signing_key.key,
+                algorithms=["RS256"],
+                audience=self.client_id,
+                options={"verify_exp": True, "verify_aud": True},
+            )
+            logger.info("Azure token validated")
+            return True, claims
+        except InvalidTokenError as e:
+            logger.error(f"Azure token validation failed with JWKS {jwks_url}: {e}")
+        except Exception:
+            logger.exception("Unexpected error during token validation")
+        return False, {}
+
     # --- Abstract method implementations for Airflow 3 Auth Manager API ---
 
     def serialize_user(self, user: AzureAuthManagerUser) -> dict:
@@ -230,13 +272,11 @@ class AzureADAuthManager(BaseAuthManager):
         }
 
     def deserialize_user(self, token: dict) -> AzureAuthManagerUser:
-        print("deserialize_user called", token)
         user = AzureAuthManagerUser(
             username=token.get("username"),
             email=token.get("email"),
             role=token.get("role"),
         )
-        print("Restored user:", user.username, user.email, user.role)
         return user
 
     def filter_authorized_menu_items(self, menu_items, *, user):
@@ -264,6 +304,9 @@ class AzureADAuthManager(BaseAuthManager):
         return self._has_role(user, "user")
 
     def is_authorized_configuration(self, *, method, details=None, user=None):
+        # refers to UI config settings, not admin config
+        if method == "GET":
+            return self._has_role(user, "viewer")
         return self._has_role(user, "admin")
 
     def is_authorized_connection(self, *, method, details=None, user=None):
@@ -286,8 +329,3 @@ class AzureADAuthManager(BaseAuthManager):
 
     def is_authorized_view(self, *, access_view, user=None):
         return self._has_role(user, "viewer")
-
-    # TODO: Add logging and error handling
-
-
-# TODO: Add helper functions for JWT validation, JWKS fetching, etc.
