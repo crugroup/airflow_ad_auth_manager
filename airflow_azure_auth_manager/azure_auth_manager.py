@@ -1,7 +1,7 @@
 import logging
 import urllib.parse
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import jwt
 import requests
@@ -109,16 +109,15 @@ class AzureADAuthManager(BaseAuthManager):
             resp = requests.post(token_url, data=data)
             if resp.status_code != 200:  # noqa: PLR2004
                 return HTMLResponse("Token exchange failed", status_code=400)
+            
             tokens = resp.json()
             access_token = tokens.get("access_token")
             if not access_token:
                 return HTMLResponse("No access token", status_code=400)
-            # Print header and claims for debugging
-            header = jwt.get_unverified_header(access_token)
-            claims = jwt.decode(access_token, options={"verify_signature": False})
-            print("Azure token header:", header)
-            print("Azure token claims:", claims)
-            print("Audience for validation:", self.client_id)
+            id_token = tokens.get("id_token")
+            if not id_token:
+                return HTMLResponse("No ID token", status_code=400)
+            
             # Try tenant-specific JWKS first
             jwks_urls = [
                 f"https://login.microsoftonline.com/{self.tenant_id}/discovery/v2.0/keys",
@@ -126,27 +125,42 @@ class AzureADAuthManager(BaseAuthManager):
             ]
             validated = False
             for jwks_url in jwks_urls:
-                print("Trying JWKS URL:", jwks_url)
+                logger.info("Trying JWKS URL:", jwks_url)
                 jwk_client = PyJWKClient(jwks_url)
+                
                 try:
-                    signing_key = jwk_client.get_signing_key_from_jwt(access_token)
+                    signing_key = jwk_client.get_signing_key_from_jwt(id_token)
                     claims = jwt.decode(
-                        access_token,
+                        id_token,
                         signing_key.key,
                         algorithms=["RS256"],
                         audience=self.client_id,
                         options={"verify_exp": True, "verify_aud": True},
                     )
                     validated = True
-                    print("Azure token validated with JWKS URL:", jwks_url)
+                    logger.info("Azure token validated", jwks_url)
                     break
                 except InvalidTokenError as e:
-                    print(f"Azure token validation failed with JWKS {jwks_url}: {e}")
+                    logger.error(f"Azure token validation failed with JWKS {jwks_url}: {e}")
+                except Exception:
+                    logger.exception(f"Unexpected error during token validation")
+            
             if not validated:
                 return HTMLResponse("Azure token validation failed: Signature verification failed", status_code=400)
-            username, email, group_guids = self._extract_user_info(claims)
+            
+            graph_url = "https://graph.microsoft.com/v1.0/me/memberOf"
+            headers = {"Authorization": f"Bearer {access_token}"}
+            resp = requests.get(graph_url, headers=headers)
+            if resp.status_code != 200:
+                logger.error(f"Failed to fetch groups from Microsoft Graph: {resp.text}")
+                return HTMLResponse("Failed to fetch user groups", status_code=400)
+            group_data = resp.json()
+            group_guids = [group["id"] for group in group_data.get("value", []) if "id" in group]
+            
+            username, email, _ = self._extract_user_info(claims)
             role = self.get_user_role(group_guids)
             user = AzureAuthManagerUser(username=username, email=email, role=role)
+            
             jwt_token = self.generate_jwt(user)
             response = RedirectResponse(url="/")
             secure = bool(conf.get("api", "ssl_cert", fallback=""))
@@ -186,7 +200,7 @@ class AzureADAuthManager(BaseAuthManager):
         )
         return claims
 
-    def _extract_user_info(self, claims: Dict[str, Any]) -> (str, str, List[str]):
+    def _extract_user_info(self, claims: Dict[str, Any]) -> Tuple[str, str, List[str]]:
         """
         Extract username, email, and group GUIDs from JWT claims.
         """
