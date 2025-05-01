@@ -112,3 +112,7 @@ The following role hierarchy is used to determine access levels:
 ## Development
 
 To contribute to this project, clone the repository and create a new branch for your feature or bug fix. Submit a pull request when ready.
+
+## License
+
+This project is licensed under the GNU General Public License v3.0. See the `LICENSE` file for details.
