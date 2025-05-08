@@ -37,7 +37,7 @@ group_role_map = <group-guid-1>:<role-1>,<group-guid-2>:<role-2>,...
 - **`tenant_id`**: The Azure AD tenant ID for your organization.
 - **`client_id`**: The Azure AD application (client) ID.
 - **`client_secret`**: The client secret for the Azure AD application.
-- **`api_secret_key`**: A secret key used to validate API keys for the `/auth/api_login` endpoint. Leave blank to disable API key authentication.
+- **`api_secret_key`**: A secret key used to validate API keys for the `/auth/token` endpoint. Leave blank to disable API key authentication.
 - **`jwks_uri`**: The URI for the JSON Web Key Set (JWKS) used to validate Azure AD tokens. Defaults to the common endpoint.
 - **`default_role`**: The default Airflow role assigned to users if no group matches are found. Defaults to `user`.
 - **`group_role_map`**: A comma-separated list of mappings between Azure AD group GUIDs and Airflow roles. Each mapping is in the format `<group-guid>:<role>`. For example:
@@ -59,24 +59,24 @@ Redirects users to the Azure AD login page for authentication. After successful 
 
 Handles the callback from Azure AD after authentication. Exchanges the authorization code for access and ID tokens, validates the tokens, and assigns the appropriate Airflow role based on the `group_role_map`.
 
-### `/auth/api_login`
+### `/auth/token`
 
 An API endpoint for authenticating users using a username and API key. This is useful for programmatic access to Airflow.
 
 #### Request
 
 ```json
-POST /auth/api_login
+POST /auth/token
 Content-Type: application/json
 
 {
   "username": "example_user",
-  "api_key": "example_api_key"
+  "password": "example_api_key"
 }
 ```
 
 - **`username`**: The username of the user.
-- **`api_key`**: The API key.
+- **`password`**: The API key.
 
 #### Response
 
@@ -106,7 +106,7 @@ The following role hierarchy is used to determine access levels:
    sha256(username + api_secret_key + role).hexdigest()
    ```
    Replace `username`, `api_secret_key`, and `role` with the appropriate values.
-2. Send a `POST` request to `/auth/api_login` with the `username` and `api_key`.
+2. Send a `POST` request to `/auth/token` with the `username` and `password`.
 3. Use the returned JWT token for subsequent API requests.
 
 ## Development

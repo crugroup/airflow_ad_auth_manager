@@ -40,7 +40,7 @@ class AzureAuthManagerUser(BaseUser):
 
 class LoginRequest(BaseModel):
     username: str
-    api_key: str
+    password: str
 
 
 class AzureADAuthManager(BaseAuthManager):
@@ -135,18 +135,18 @@ class AzureADAuthManager(BaseAuthManager):
             user = AzureAuthManagerUser(username=username, email=email, role=role)
             return self._generate_jwt_response(user)
 
-        @router.post("/api_login")
-        async def api_login(request: LoginRequest):
+        @router.post("/token")
+        async def token(request: LoginRequest):
             """
-            API login endpoint that validates username and api_key.
+            API login endpoint that validates username and password.
             """
             if not self.api_secret_key:
                 raise HTTPException(status_code=400, detail="API authentication is not enabled")
-            if not request.username or not request.api_key:
+            if not request.username or not request.password:
                 raise HTTPException(status_code=400, detail="Username and API key are required")
 
             username = request.username
-            api_key = request.api_key.lower()
+            api_key = request.password.lower()
             api_key_role = None
 
             for role in self._role_order:
