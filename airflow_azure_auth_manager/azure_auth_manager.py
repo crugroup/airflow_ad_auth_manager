@@ -131,7 +131,7 @@ class AzureADAuthManager(BaseAuthManager):
                 raise HTTPException(status_code=400, detail=str(e)) from e
 
             username, email, _ = self._extract_user_info(claims)
-            role = self.get_user_role(group_guids)
+            role = self._get_user_role(group_guids)
             user = AzureAuthManagerUser(username=username, email=email, role=role)
             return self._generate_jwt_response(user)
 
@@ -191,56 +191,6 @@ class AzureADAuthManager(BaseAuthManager):
 
         return access_token, id_token
 
-    def _generate_jwt_response(self, user: AzureAuthManagerUser) -> RedirectResponse:
-        """
-        Generate a JWT token for the user and return a RedirectResponse with the token set as a cookie.
-        """
-        jwt_token = self.generate_jwt(user)
-        response = RedirectResponse(url="/")
-        secure = bool(conf.get("api", "ssl_cert", fallback=""))
-        response.set_cookie(
-            COOKIE_NAME_JWT_TOKEN,
-            jwt_token,
-            secure=secure,
-            httponly=False,  # Must be False so UI can read it
-            samesite="lax",
-            path="/",
-        )
-        return response
-
-    def _fetch_group_ids(self, access_token: str) -> List[str]:
-        """
-        Fetch group IDs from Microsoft Graph API using the provided access token.
-        """
-        graph_url = "https://graph.microsoft.com/v1.0/me/memberOf"
-        headers = {"Authorization": f"Bearer {access_token}"}
-        resp = requests.get(graph_url, headers=headers)
-        if resp.status_code != 200:  # noqa: PLR2004
-            logger.error(f"Failed to fetch groups from Microsoft Graph: {resp.text}")
-            raise Exception("Failed to fetch user groups")
-        group_data = resp.json()
-        return [group["id"] for group in group_data.get("value", []) if "id" in group]
-
-    def get_user_role(self, group_guids: List[str]) -> str:
-        """
-        Map Azure AD group GUIDs to Airflow role using config. Return default_role if no match.
-        """
-        for group in group_guids:
-            if group in self.group_role_map:
-                return self.group_role_map[group]
-        return self.default_role
-
-    def _extract_user_info(self, claims: Dict[str, Any]) -> Tuple[str, str, List[str]]:
-        """
-        Extract username, email, and group GUIDs from JWT claims.
-        """
-        username = claims.get("preferred_username") or claims.get("upn") or claims.get("email")
-        email = claims.get("email") or claims.get("preferred_username") or claims.get("upn")
-        group_guids = claims.get("groups", [])
-        if not isinstance(group_guids, list):
-            group_guids = []
-        return username, email, group_guids
-
     def _validate_token_with_jwks(self, id_token: str, jwks_url: str) -> Tuple[bool, Dict[str, Any]]:
         """
         Validate the ID token using the JWKS URL and return the validation status and claims.
@@ -263,6 +213,56 @@ class AzureADAuthManager(BaseAuthManager):
         except Exception:
             logger.exception("Unexpected error during token validation")
         return False, {}
+
+    def _fetch_group_ids(self, access_token: str) -> List[str]:
+        """
+        Fetch group IDs from Microsoft Graph API using the provided access token.
+        """
+        graph_url = "https://graph.microsoft.com/v1.0/me/memberOf"
+        headers = {"Authorization": f"Bearer {access_token}"}
+        resp = requests.get(graph_url, headers=headers)
+        if resp.status_code != 200:  # noqa: PLR2004
+            logger.error(f"Failed to fetch groups from Microsoft Graph: {resp.text}")
+            raise Exception("Failed to fetch user groups")
+        group_data = resp.json()
+        return [group["id"] for group in group_data.get("value", []) if "id" in group]
+
+    def _extract_user_info(self, claims: Dict[str, Any]) -> Tuple[str, str, List[str]]:
+        """
+        Extract username, email, and group GUIDs from JWT claims.
+        """
+        username = claims.get("preferred_username") or claims.get("upn") or claims.get("email")
+        email = claims.get("email") or claims.get("preferred_username") or claims.get("upn")
+        group_guids = claims.get("groups", [])
+        if not isinstance(group_guids, list):
+            group_guids = []
+        return username, email, group_guids
+
+    def _get_user_role(self, group_guids: List[str]) -> str:
+        """
+        Map Azure AD group GUIDs to Airflow role using config. Return default_role if no match.
+        """
+        for group in group_guids:
+            if group in self.group_role_map:
+                return self.group_role_map[group]
+        return self.default_role
+
+    def _generate_jwt_response(self, user: AzureAuthManagerUser) -> RedirectResponse:
+        """
+        Generate a JWT token for the user and return a RedirectResponse with the token set as a cookie.
+        """
+        jwt_token = self.generate_jwt(user)
+        response = RedirectResponse(url="/")
+        secure = bool(conf.get("api", "ssl_cert", fallback=""))
+        response.set_cookie(
+            COOKIE_NAME_JWT_TOKEN,
+            jwt_token,
+            secure=secure,
+            httponly=False,  # Must be False so UI can read it
+            samesite="lax",
+            path="/",
+        )
+        return response
 
     # --- Abstract method implementations for Airflow 3 Auth Manager API ---
 
