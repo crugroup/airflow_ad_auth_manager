@@ -14,6 +14,8 @@ from fastapi.responses import RedirectResponse
 from fastapi.routing import APIRouter
 from jwt import InvalidTokenError, PyJWKClient
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,21 @@ class AzureAuthManagerUser(BaseUser):
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class ProxyHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        # Check for X-Forwarded-Proto header
+        if request.headers.get("x-forwarded-proto") == "https":
+            request.scope["scheme"] = "https"
+
+        # Check for X-Forwarded-Host header
+        if request.headers.get("x-forwarded-host"):
+            request.scope["headers"] = [
+                (name, value) for name, value in request.scope["headers"] if name != b"host"
+            ] + [(b"host", request.headers["x-forwarded-host"].encode())]
+
+        return await call_next(request)
 
 
 class AzureADAuthManager(BaseAuthManager):
@@ -79,6 +96,10 @@ class AzureADAuthManager(BaseAuthManager):
         FastAPI sub-app for UI login/logout with Azure AD OAuth2.
         """
         app = FastAPI(title="Azure AD Auth Manager Login App")
+
+        # Add middleware to handle proxy headers
+        app.add_middleware(ProxyHeadersMiddleware)
+
         router = APIRouter()
 
         @router.get("/login")
