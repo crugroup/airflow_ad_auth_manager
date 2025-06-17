@@ -19,11 +19,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/crugroup/airflow-azure-auth-manager"
+Homepage = "https://github.com/crugroup/airflow-ad-auth-manager"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["airflow_azure_auth_manager*"]
+include = ["airflow_ad_auth_manager*"]
 
 [tool.ruff]
 line-length = 120
