@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "airflow-azure-auth-manager"
+name = "airflow-ad-auth-manager"
 version = "0.1.0"
 description = "Azure AD Auth Manager for Apache Airflow 3.x"
 authors = [
