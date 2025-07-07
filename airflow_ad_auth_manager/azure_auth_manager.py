@@ -2,7 +2,7 @@ import logging
 import urllib.parse
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import jwt
 import requests
@@ -79,7 +79,7 @@ class AzureADAuthManager(BaseAuthManager):
         self.group_role_map = self._parse_group_role_map(conf.get("azure_auth_manager", "group_role_map", fallback=""))
         self.jwk_client = PyJWKClient(self.jwks_uri)
 
-    def _parse_group_role_map(self, raw: str) -> Dict[str, str]:
+    def _parse_group_role_map(self, raw: str) -> dict[str, str]:
         """
         Parse group_role_map config string into a dict: {group_guid: role}
         """
@@ -186,7 +186,7 @@ class AzureADAuthManager(BaseAuthManager):
         app.include_router(router)
         return app
 
-    def _exchange_code_for_tokens(self, code: str, redirect_uri: str) -> Tuple[str, str]:
+    def _exchange_code_for_tokens(self, code: str, redirect_uri: str) -> tuple[str, str]:
         """
         Exchange the authorization code for access and ID tokens.
         """
@@ -212,7 +212,7 @@ class AzureADAuthManager(BaseAuthManager):
 
         return access_token, id_token
 
-    def _validate_token_with_jwks(self, id_token: str, jwks_url: str) -> Tuple[bool, Dict[str, Any]]:
+    def _validate_token_with_jwks(self, id_token: str, jwks_url: str) -> tuple[bool, dict[str, Any]]:
         """
         Validate the ID token using the JWKS URL and return the validation status and claims.
         """
@@ -235,7 +235,7 @@ class AzureADAuthManager(BaseAuthManager):
             logger.exception("Unexpected error during token validation")
         return False, {}
 
-    def _fetch_group_ids(self, access_token: str) -> List[str]:
+    def _fetch_group_ids(self, access_token: str) -> list[str]:
         """
         Fetch group IDs from Microsoft Graph API using the provided access token.
         """
@@ -248,7 +248,7 @@ class AzureADAuthManager(BaseAuthManager):
         group_data = resp.json()
         return [group["id"] for group in group_data.get("value", []) if "id" in group]
 
-    def _extract_user_info(self, claims: Dict[str, Any]) -> Tuple[str, str, List[str]]:
+    def _extract_user_info(self, claims: dict[str, Any]) -> tuple[str, str, list[str]]:
         """
         Extract username, email, and group GUIDs from JWT claims.
         """
@@ -259,7 +259,7 @@ class AzureADAuthManager(BaseAuthManager):
             group_guids = []
         return username, email, group_guids
 
-    def _get_user_role(self, group_guids: List[str]) -> str:
+    def _get_user_role(self, group_guids: list[str]) -> str:
         """
         Map Azure AD group GUIDs to Airflow role using config. Return default_role if no match.
         """

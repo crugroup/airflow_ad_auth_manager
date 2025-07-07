@@ -11,9 +11,9 @@ authors = [
     { name = "Zakariah Nuccio", email = "zak.nuccio@crugroup.com" },
 ]
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
-    "apache-airflow>=3.0.0",
+    "apache-airflow>=3",
     "PyJWT>=2.0.0",
     "requests>=2.0.0"
 ]
