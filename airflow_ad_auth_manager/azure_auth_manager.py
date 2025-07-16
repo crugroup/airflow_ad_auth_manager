@@ -10,7 +10,7 @@ from airflow.api_fastapi.auth.managers.base_auth_manager import COOKIE_NAME_JWT_
 from airflow.api_fastapi.auth.managers.models.base_user import BaseUser
 from airflow.configuration import conf
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from fastapi.routing import APIRouter
 from jwt import InvalidTokenError, PyJWKClient
 from pydantic import BaseModel
@@ -154,7 +154,7 @@ class AzureADAuthManager(BaseAuthManager):
             username, email, _ = self._extract_user_info(claims)
             role = self._get_user_role(group_guids)
             user = AzureAuthManagerUser(username=username, email=email, role=role)
-            return self._generate_jwt_response(user)
+            return self._generate_jwt_response(user, redirect_url="/")
 
         @router.post("/token")
         async def token(request: LoginRequest):
@@ -172,7 +172,9 @@ class AzureADAuthManager(BaseAuthManager):
 
             for role in self._role_order:
                 hash = sha256()
-                hash.update((username + self.api_secret_key + role).encode("utf-8"))
+                hash.update(username.encode("utf-8"))
+                hash.update(self.api_secret_key.encode("utf-8"))
+                hash.update(role.encode("utf-8"))
                 if hash.hexdigest().lower() == api_key:
                     logger.info(f"Authenticated user {username} with role {role}")
                     api_key_role = role
@@ -268,12 +270,15 @@ class AzureADAuthManager(BaseAuthManager):
                 return self.group_role_map[group]
         return self.default_role
 
-    def _generate_jwt_response(self, user: AzureAuthManagerUser) -> RedirectResponse:
+    def _generate_jwt_response(self, user: AzureAuthManagerUser, redirect_url=None) -> RedirectResponse:
         """
         Generate a JWT token for the user and return a RedirectResponse with the token set as a cookie.
         """
         jwt_token = self.generate_jwt(user)
-        response = RedirectResponse(url="/")
+        if redirect_url:
+            response = RedirectResponse(url=redirect_url)
+        else:
+            response = Response(status_code=204)  # No content response
         secure = bool(conf.get("api", "ssl_cert", fallback=""))
         response.set_cookie(
             COOKIE_NAME_JWT_TOKEN,
@@ -328,8 +333,6 @@ class AzureADAuthManager(BaseAuthManager):
 
     def is_authorized_configuration(self, *, method, details=None, user=None):
         # refers to UI config settings, not admin config
-        if method == "GET":
-            return self._has_role(user, "viewer")
         return self._has_role(user, "admin")
 
     def is_authorized_connection(self, *, method, details=None, user=None):
