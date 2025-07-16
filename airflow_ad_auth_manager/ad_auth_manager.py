@@ -27,7 +27,7 @@ class AuthUser:
     role: str
 
 
-class AzureAuthManagerUser(BaseUser):
+class ADAuthManagerUser(BaseUser):
     def __init__(self, username: str, email: str, role: str):
         self.username = username
         self.email = email
@@ -60,7 +60,7 @@ class ProxyHeadersMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-class AzureADAuthManager(BaseAuthManager):
+class ADAuthManager(BaseAuthManager):
     """
     Airflow 3 Auth Manager for Azure AD authentication using access tokens.
     - Maps Azure AD group GUIDs to Airflow roles via config.
@@ -68,15 +68,15 @@ class AzureADAuthManager(BaseAuthManager):
     """
 
     def __init__(self):
-        self.tenant_id = conf.get("azure_auth_manager", "tenant_id")
-        self.client_id = conf.get("azure_auth_manager", "client_id")
-        self.client_secret = conf.get("azure_auth_manager", "client_secret")
-        self.api_secret_key = conf.get("azure_auth_manager", "api_secret_key", fallback=None)
+        self.tenant_id = conf.get("ad_auth_manager", "tenant_id")
+        self.client_id = conf.get("ad_auth_manager", "client_id")
+        self.client_secret = conf.get("ad_auth_manager", "client_secret")
+        self.api_secret_key = conf.get("ad_auth_manager", "api_secret_key", fallback=None)
         self.jwks_uri = conf.get(
-            "azure_auth_manager", "jwks_uri", fallback="https://login.microsoftonline.com/common/discovery/v2.0/keys"
+            "ad_auth_manager", "jwks_uri", fallback="https://login.microsoftonline.com/common/discovery/v2.0/keys"
         )
-        self.default_role = conf.get("azure_auth_manager", "default_role", fallback="user")
-        self.group_role_map = self._parse_group_role_map(conf.get("azure_auth_manager", "group_role_map", fallback=""))
+        self.default_role = conf.get("ad_auth_manager", "default_role", fallback="user")
+        self.group_role_map = self._parse_group_role_map(conf.get("ad_auth_manager", "group_role_map", fallback=""))
         self.jwk_client = PyJWKClient(self.jwks_uri)
 
     def _parse_group_role_map(self, raw: str) -> dict[str, str]:
@@ -142,9 +142,7 @@ class AzureADAuthManager(BaseAuthManager):
                     break
 
             if not validated:
-                raise HTTPException(
-                    status_code=400, detail="Azure token validation failed: Signature verification failed"
-                )
+                raise HTTPException(status_code=400, detail="AD token validation failed: Signature verification failed")
 
             try:
                 group_guids = self._fetch_group_ids(access_token)
@@ -153,7 +151,7 @@ class AzureADAuthManager(BaseAuthManager):
 
             username, email, _ = self._extract_user_info(claims)
             role = self._get_user_role(group_guids)
-            user = AzureAuthManagerUser(username=username, email=email, role=role)
+            user = ADAuthManagerUser(username=username, email=email, role=role)
             return self._generate_jwt_response(user, redirect_url="/")
 
         @router.post("/token")
@@ -182,7 +180,7 @@ class AzureADAuthManager(BaseAuthManager):
             else:
                 raise HTTPException(status_code=401, detail="Invalid API key")
 
-            user = AzureAuthManagerUser(username=username, email="", role=api_key_role)
+            user = ADAuthManagerUser(username=username, email="", role=api_key_role)
             return self._generate_jwt_response(user)
 
         app.include_router(router)
@@ -229,10 +227,10 @@ class AzureADAuthManager(BaseAuthManager):
                 audience=self.client_id,
                 options={"verify_exp": True, "verify_aud": True},
             )
-            logger.info("Azure token validated")
+            logger.info("AD token validated")
             return True, claims
         except InvalidTokenError as e:
-            logger.error(f"Azure token validation failed with JWKS {jwks_url}: {e}")
+            logger.error(f"AD token validation failed with JWKS {jwks_url}: {e}")
         except Exception:
             logger.exception("Unexpected error during token validation")
         return False, {}
@@ -270,7 +268,7 @@ class AzureADAuthManager(BaseAuthManager):
                 return self.group_role_map[group]
         return self.default_role
 
-    def _generate_jwt_response(self, user: AzureAuthManagerUser, redirect_url=None) -> RedirectResponse:
+    def _generate_jwt_response(self, user: ADAuthManagerUser, redirect_url=None) -> RedirectResponse:
         """
         Generate a JWT token for the user and return a RedirectResponse with the token set as a cookie.
         """
@@ -292,15 +290,15 @@ class AzureADAuthManager(BaseAuthManager):
 
     # --- Abstract method implementations for Airflow 3 Auth Manager API ---
 
-    def serialize_user(self, user: AzureAuthManagerUser) -> dict:
+    def serialize_user(self, user: ADAuthManagerUser) -> dict:
         return {
             "username": user.username,
             "email": user.email,
             "role": user.role,
         }
 
-    def deserialize_user(self, token: dict) -> AzureAuthManagerUser:
-        user = AzureAuthManagerUser(
+    def deserialize_user(self, token: dict) -> ADAuthManagerUser:
+        user = ADAuthManagerUser(
             username=token.get("username"),
             email=token.get("email"),
             role=token.get("role"),

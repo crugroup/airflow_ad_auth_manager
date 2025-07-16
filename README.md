@@ -14,15 +14,15 @@ The `airflow_ad_auth_manager` is an authentication manager for Airflow 3, design
 
 Installation can be done via pip:
 ```bash
-pip install airflow_azure_auth_manager
+pip install airflow_ad_auth_manager
 ```
 
 ## Configuration
 
-The following parameters must be added to the `[azure_auth_manager]` section of your `airflow.cfg` file:
+The following parameters must be added to the `[ad_auth_manager]` section of your `airflow.cfg` file:
 
 ```ini
-[azure_auth_manager]
+[ad_auth_manager]
 tenant_id = <your-azure-ad-tenant-id>
 client_id = <your-azure-ad-client-id>
 client_secret = <your-azure-ad-client-secret>
@@ -53,11 +53,11 @@ group_role_map = <group-guid-1>:<role-1>,<group-guid-2>:<role-2>,...
 
 ### `/auth/login`
 
-Redirects users to the Azure AD login page for authentication. After successful login, users are redirected back to the Airflow UI with a JWT token set as a cookie.
+Redirects users to the Azure login page for authentication. After successful login, users are redirected back to the Airflow UI with a JWT token set as a cookie.
 
 ### `/auth/callback`
 
-Handles the callback from Azure AD after authentication. Exchanges the authorization code for access and ID tokens, validates the tokens, and assigns the appropriate Airflow role based on the `group_role_map`.
+Handles the callback from Azure after authentication. Exchanges the authorization code for access and ID tokens, validates the tokens, and assigns the appropriate Airflow role based on the `group_role_map`.
 
 ### `/auth/token`
 
