@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "airflow-ad-auth-manager"
-version = "0.1.0"
+version = "1.0.0"
 description = "Azure AD Auth Manager for Apache Airflow 3.x"
 authors = [
     { name = "Marcin Szymanski", email = "marcin.szymanski@crugroup.com" },
@@ -17,9 +17,16 @@ dependencies = [
     "PyJWT>=2.0.0",
     "requests>=2.0.0"
 ]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "GPL-3.0-or-later"
+license-files = ["LICEN[CS]E*"]
 
 [project.urls]
 Homepage = "https://github.com/crugroup/airflow-ad-auth-manager"
+Issues = "https://github.com/crugroup/airflow-ad-auth-manager/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
