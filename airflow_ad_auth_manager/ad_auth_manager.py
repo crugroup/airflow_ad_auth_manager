@@ -33,7 +33,14 @@ class ADAuthManagerUser(BaseUser):
         self.email = email
         self.role = role
 
+    def get_id(self):
+        return self.username
+
+    # Backwards-compatible alias (Airflow <3.2 used get_user_id)
     def get_user_id(self):
+        return self.get_id()
+
+    def get_name(self):
         return self.username
 
     def get_role(self):
