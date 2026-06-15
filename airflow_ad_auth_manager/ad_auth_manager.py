@@ -10,7 +10,7 @@ from airflow.api_fastapi.auth.managers.base_auth_manager import COOKIE_NAME_JWT_
 from airflow.api_fastapi.auth.managers.models.base_user import BaseUser
 from airflow.configuration import conf
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import RedirectResponse, Response, JSONResponse
 from fastapi.routing import APIRouter
 from jwt import InvalidTokenError, PyJWKClient
 from pydantic import BaseModel
@@ -283,8 +283,11 @@ class ADAuthManager(BaseAuthManager):
         if redirect_url:
             response = RedirectResponse(url=redirect_url)
         else:
-            response = Response(status_code=204)  # No content response
+            response = JSONResponse({"access_token": jwt_token})
         secure = bool(conf.get("api", "ssl_cert", fallback=""))
+        # TODO: this cookie is only really set for backwards compatibility now,
+        # future users should just use the json response, so eventually we should
+        # remove this
         response.set_cookie(
             COOKIE_NAME_JWT_TOKEN,
             jwt_token,
