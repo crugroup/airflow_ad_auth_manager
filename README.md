@@ -37,7 +37,7 @@ group_role_map = <group-guid-1>:<role-1>,<group-guid-2>:<role-2>,...
 - **`tenant_id`**: The Azure AD tenant ID for your organization.
 - **`client_id`**: The Azure AD application (client) ID.
 - **`client_secret`**: The client secret for the Azure AD application.
-- **`api_secret_key`**: A secret key used to derive API keys for the `/auth/token` endpoint. Leave blank to disable API key authentication.
+- **`api_secret_key`**: A master key used to derive per-user secret keys. Leave blank to disable API key authentication.
 - **`jwks_uri`**: The URI for the JSON Web Key Set (JWKS) used to validate Azure AD tokens. Defaults to the common endpoint.
 - **`default_role`**: The default Airflow role assigned to users if no group matches are found. Defaults to `user`.
 - **`group_role_map`**: A comma-separated list of mappings between Azure AD group GUIDs and Airflow roles. Each mapping is in the format `<group-guid>:<role>`. For example:
