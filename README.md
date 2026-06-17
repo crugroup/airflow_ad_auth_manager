@@ -37,7 +37,7 @@ group_role_map = <group-guid-1>:<role-1>,<group-guid-2>:<role-2>,...
 - **`tenant_id`**: The Azure AD tenant ID for your organization.
 - **`client_id`**: The Azure AD application (client) ID.
 - **`client_secret`**: The client secret for the Azure AD application.
-- **`api_secret_key`**: A secret key used to validate API keys for the `/auth/token` endpoint. Leave blank to disable API key authentication.
+- **`api_secret_key`**: A secret key used to derive API keys for the `/auth/token` endpoint. Leave blank to disable API key authentication.
 - **`jwks_uri`**: The URI for the JSON Web Key Set (JWKS) used to validate Azure AD tokens. Defaults to the common endpoint.
 - **`default_role`**: The default Airflow role assigned to users if no group matches are found. Defaults to `user`.
 - **`group_role_map`**: A comma-separated list of mappings between Azure AD group GUIDs and Airflow roles. Each mapping is in the format `<group-guid>:<role>`. For example:
@@ -71,7 +71,7 @@ Content-Type: application/json
 
 {
   "username": "example_user",
-  "password": "example_api_key"
+  "password": "e451282451e092155905f082ea9e8562283af25239aa370cb62e5dae465b4589:1781687917"
 }
 ```
 
@@ -101,11 +101,25 @@ The following role hierarchy is used to determine access levels:
 
 ### API Login
 
-1. Generate an API key using the formula:
+1. Generate a per-user seret using the formula:
    ```
-   sha256(username + api_secret_key + role).hexdigest()
+   per_user_secret = hmac.new(
+     self.api_secret_key.encode("utf-8"),
+     msg=username.encode("utf-8"),
+     digestmod=sha256,
+   ).hexdigest()
    ```
-   Replace `username`, `api_secret_key`, and `role` with the appropriate values.
+   Replace `username` and `api_secret_key` with the appropriate values.
+2. Using this secret, generate an API key using the formula:
+   ```
+   secret_hash = hmac.new(
+     bytes.fromhex(per_user_secret),
+     msg=f"{role}:{expiry}".encode("utf-8")",
+     digestmod=sha256,
+   ).hexdigest()
+   api_key = f"{secret_hash}:{expiry}"
+   ```
+   Replace `role` with one of the above roles, and `expiry` with a UNIX epoch in seconds for when the token expires.
 2. Send a `POST` request to `/auth/token` with the `username` and `password`.
 3. Use the returned JWT token for subsequent API requests.
 

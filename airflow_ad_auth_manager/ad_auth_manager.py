@@ -1,4 +1,6 @@
+import hmac
 import logging
+import time
 import urllib.parse
 from dataclasses import dataclass
 from hashlib import sha256
@@ -175,13 +177,25 @@ class ADAuthManager(BaseAuthManager):
             api_key = request.password.lower()
             api_key_role = None
 
+            if ":" not in api_key:
+                raise HTTPException(status_code=401, detail="Invalid API key format")
+
+            hmac_digest, expiry_str = api_key.split(":", 1)
+            try:
+                expiry_epoch = int(expiry_str)
+            except ValueError:
+                raise HTTPException(status_code=401, detail="Invalid API key format")
+
+            if time.time() > expiry_epoch:
+                raise HTTPException(status_code=401, detail="API key has expired")
+
             for role in self._role_order:
-                hash = sha256()
-                hash.update(username.encode("utf-8"))
-                hash.update(self.api_secret_key.encode("utf-8"))
-                hash.update(role.encode("utf-8"))
-                if hash.hexdigest().lower() == api_key:
-                    logger.info(f"Authenticated user {username} with role {role}")
+                expected = self._compute_expected_hmac(username, role, expiry_epoch)
+                if expected == hmac_digest:
+                    logger.debug(
+                        "Authenticated user %s with role %s (expires=%s)",
+                        username, role, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(expiry_epoch)),
+                    )
                     api_key_role = role
                     break
             else:
@@ -274,6 +288,28 @@ class ADAuthManager(BaseAuthManager):
             if group in self.group_role_map:
                 return self.group_role_map[group]
         return self.default_role
+
+    def _derive_per_user_secret(self, username: str) -> bytes:
+        """
+        Derive a per-user secret from the master API key using HKDF-style HMAC.
+
+        per_user_secret = HMAC-SHA256(key=api_secret_key, message=username)
+        """
+        return hmac.new(
+            self.api_secret_key.encode("utf-8"),
+            msg=username.encode("utf-8"),
+            digestmod=sha256,
+        ).digest()
+
+    def _compute_expected_hmac(self, username: str, role: str, expiry_epoch: int) -> str:
+        """
+        Compute the expected HMAC-SHA256 digest for a given user, role, and expiry.
+
+        hmac_digest = HMAC-SHA256(key=per_user_secret, message="{role}:{expiry_epoch}")
+        """
+        per_user_secret = self._derive_per_user_secret(username)
+        message = f"{role}:{expiry_epoch}".encode("utf-8")
+        return hmac.new(per_user_secret, message, sha256).hexdigest().lower()
 
     def _generate_jwt_response(self, user: ADAuthManagerUser, redirect_url=None) -> RedirectResponse:
         """
