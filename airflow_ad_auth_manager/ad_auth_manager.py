@@ -289,15 +289,15 @@ class ADAuthManager(BaseAuthManager):
                 return self.group_role_map[group]
         return self.default_role
 
-    def _derive_per_user_secret(self, username: str) -> bytes:
+    def _derive_per_user_secret(self, username: str, role: str) -> bytes:
         """
         Derive a per-user secret from the master API key using HKDF-style HMAC.
 
-        per_user_secret = HMAC-SHA256(key=api_secret_key, message=username)
+        per_user_secret = HMAC-SHA256(key=api_secret_key, message=f"{username}:{role}")
         """
         return hmac.new(
             self.api_secret_key.encode("utf-8"),
-            msg=username.encode("utf-8"),
+            msg=f"{username}:{role}".encode("utf-8"),
             digestmod=sha256,
         ).digest()
 
@@ -305,10 +305,10 @@ class ADAuthManager(BaseAuthManager):
         """
         Compute the expected HMAC-SHA256 digest for a given user, role, and expiry.
 
-        hmac_digest = HMAC-SHA256(key=per_user_secret, message="{role}:{expiry_epoch}")
+        hmac_digest = HMAC-SHA256(key=per_user_secret, message="{expiry_epoch}")
         """
-        per_user_secret = self._derive_per_user_secret(username)
-        message = f"{role}:{expiry_epoch}".encode("utf-8")
+        per_user_secret = self._derive_per_user_secret(username, role)
+        message = str(expiry_epoch).encode("utf-8")
         return hmac.new(per_user_secret, message, sha256).hexdigest().lower()
 
     def _generate_jwt_response(self, user: ADAuthManagerUser, redirect_url=None) -> RedirectResponse:

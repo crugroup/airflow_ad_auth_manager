@@ -105,21 +105,21 @@ The following role hierarchy is used to determine access levels:
    ```
    per_user_secret = hmac.new(
      self.api_secret_key.encode("utf-8"),
-     msg=username.encode("utf-8"),
+     msg=f"{username}:{role}".encode("utf-8"),
      digestmod=sha256,
    ).hexdigest()
    ```
-   Replace `username` and `api_secret_key` with the appropriate values.
+   Replace `username`, `role` and `api_secret_key` with the appropriate values.
 2. Using this secret, generate an API key using the formula:
    ```
    secret_hash = hmac.new(
      bytes.fromhex(per_user_secret),
-     msg=f"{role}:{expiry}".encode("utf-8")",
+     msg=str(expiry).encode("utf-8")",
      digestmod=sha256,
    ).hexdigest()
    api_key = f"{secret_hash}:{expiry}"
    ```
-   Replace `role` with one of the above roles, and `expiry` with a UNIX epoch in seconds for when the token expires.
+   Replace `expiry` with a UNIX epoch in seconds for when the token expires.
 3. Send a `POST` request to `/auth/token` with the `username` and `password`.
 4. Use the returned JWT token for subsequent API requests.
 
