@@ -101,7 +101,7 @@ The following role hierarchy is used to determine access levels:
 
 ### API Login
 
-1. Generate a per-user seret using the formula:
+1. Generate a per-user secret using the formula:
    ```
    per_user_secret = hmac.new(
      self.api_secret_key.encode("utf-8"),
@@ -120,8 +120,8 @@ The following role hierarchy is used to determine access levels:
    api_key = f"{secret_hash}:{expiry}"
    ```
    Replace `role` with one of the above roles, and `expiry` with a UNIX epoch in seconds for when the token expires.
-2. Send a `POST` request to `/auth/token` with the `username` and `password`.
-3. Use the returned JWT token for subsequent API requests.
+3. Send a `POST` request to `/auth/token` with the `username` and `password`.
+4. Use the returned JWT token for subsequent API requests.
 
 ## Development
 
