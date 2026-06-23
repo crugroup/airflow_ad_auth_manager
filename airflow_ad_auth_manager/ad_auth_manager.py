@@ -1,5 +1,7 @@
 import hmac
+import json
 import logging
+import secrets
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -112,10 +114,22 @@ class ADAuthManager(BaseAuthManager):
         router = APIRouter()
 
         @router.get("/login")
-        async def login(request: Request):
+        async def login(request: Request, next: str = None):
             """
             Redirect to Azure AD authorize endpoint.
+
+            The optional ``next`` query parameter (the page the user was
+            originally trying to reach) is encoded into the OAuth ``state``
+            so the callback can redirect back to it after authentication.
+            If the frontend redirects to ``/auth/login?next=/dags/my_dag``,
+            the user will be sent to ``/dags/my_dag`` after login.
             """
+            redirect_after = next or "/"
+            # Encode the redirect target into state (round-tripped through Azure AD).
+            # A nonce is included so the state value is always unique.
+            state_payload = {"next": redirect_after, "nonce": secrets.token_hex(16)}
+            state_value = urllib.parse.quote(json.dumps(state_payload))
+
             redirect_uri = str(request.url_for("callback"))
             params = {
                 "client_id": self.client_id,
@@ -123,7 +137,7 @@ class ADAuthManager(BaseAuthManager):
                 "redirect_uri": redirect_uri,
                 "response_mode": "query",
                 "scope": "openid email profile User.Read",
-                "state": "airflow-login",
+                "state": state_value,
             }
             authorize_url = (
                 f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/authorize?"
@@ -135,6 +149,16 @@ class ADAuthManager(BaseAuthManager):
         async def callback(request: Request, code: str = None, state: str = None):
             if not code:
                 raise HTTPException(status_code=400, detail="Missing code")
+
+            # Decode the redirect target from state (set by /login)
+            redirect_after = "/"
+            if state:
+                try:
+                    state_data = json.loads(urllib.parse.unquote(state))
+                    redirect_after = state_data.get("next", "/")
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
             redirect_uri = str(request.url_for("callback"))
             access_token, id_token = self._exchange_code_for_tokens(code, redirect_uri)
 
@@ -161,7 +185,7 @@ class ADAuthManager(BaseAuthManager):
             username, email, _ = self._extract_user_info(claims)
             role = self._get_user_role(group_guids)
             user = ADAuthManagerUser(username=username, email=email, role=role)
-            return self._generate_jwt_response(user, redirect_url="/")
+            return self._generate_jwt_response(user, redirect_url=redirect_after)
 
         @router.post("/token")
         async def token(request: LoginRequest):
