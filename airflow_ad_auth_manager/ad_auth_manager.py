@@ -74,7 +74,8 @@ class ProxyHeadersMiddleware(BaseHTTPMiddleware):
 class ADAuthManager(BaseAuthManager):
     """
     Airflow 3 Auth Manager for Azure AD authentication using access tokens.
-    - Maps Azure AD group GUIDs to Airflow roles via config.
+    - Resolves Airflow roles from Azure AD app roles (roles claim in the ID token).
+    - App roles are defined on the Azure AD app registration and assigned to users.
     - Supports both UI and API (Bearer token) authentication.
     """
 
@@ -87,20 +88,7 @@ class ADAuthManager(BaseAuthManager):
             "ad_auth_manager", "jwks_uri", fallback="https://login.microsoftonline.com/common/discovery/v2.0/keys"
         )
         self.default_role = conf.get("ad_auth_manager", "default_role", fallback="user")
-        self.group_role_map = self._parse_group_role_map(conf.get("ad_auth_manager", "group_role_map", fallback=""))
         self.jwk_client = PyJWKClient(self.jwks_uri)
-
-    def _parse_group_role_map(self, raw: str) -> dict[str, str]:
-        """
-        Parse group_role_map config string into a dict: {group_guid: role}
-        """
-        mapping = {}
-        if raw:
-            for pair in raw.split(","):
-                if ":" in pair:
-                    group, role = pair.split(":", 1)
-                    mapping[group.strip()] = role.strip()
-        return mapping
 
     def get_fastapi_app(self) -> FastAPI:
         """
@@ -136,7 +124,7 @@ class ADAuthManager(BaseAuthManager):
                 "response_type": "code",
                 "redirect_uri": redirect_uri,
                 "response_mode": "query",
-                "scope": "openid email profile User.Read",
+                "scope": "openid email profile",
                 "state": state_value,
             }
             authorize_url = (
@@ -177,13 +165,8 @@ class ADAuthManager(BaseAuthManager):
             if not validated:
                 raise HTTPException(status_code=400, detail="AD token validation failed: Signature verification failed")
 
-            try:
-                group_guids = self._fetch_group_ids(access_token)
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=str(e)) from e
-
-            username, email, _ = self._extract_user_info(claims)
-            role = self._get_user_role(group_guids)
+            username, email, roles = self._extract_user_info(claims)
+            role = self._get_user_role(roles)
             user = ADAuthManagerUser(username=username, email=email, role=role)
             return self._generate_jwt_response(user, redirect_url=redirect_after)
 
@@ -280,37 +263,30 @@ class ADAuthManager(BaseAuthManager):
             logger.exception("Unexpected error during token validation")
         return False, {}
 
-    def _fetch_group_ids(self, access_token: str) -> list[str]:
-        """
-        Fetch group IDs from Microsoft Graph API using the provided access token.
-        """
-        graph_url = "https://graph.microsoft.com/v1.0/me/memberOf"
-        headers = {"Authorization": f"Bearer {access_token}"}
-        resp = requests.get(graph_url, headers=headers)
-        if resp.status_code != 200:  # noqa: PLR2004
-            logger.error(f"Failed to fetch groups from Microsoft Graph: {resp.text}")
-            raise Exception("Failed to fetch user groups")
-        group_data = resp.json()
-        return [group["id"] for group in group_data.get("value", []) if "id" in group]
-
     def _extract_user_info(self, claims: dict[str, Any]) -> tuple[str, str, list[str]]:
         """
-        Extract username, email, and group GUIDs from JWT claims.
+        Extract username, email, and app roles from JWT claims.
         """
         username = claims.get("preferred_username") or claims.get("upn") or claims.get("email")
         email = claims.get("email") or claims.get("preferred_username") or claims.get("upn")
-        group_guids = claims.get("groups", [])
-        if not isinstance(group_guids, list):
-            group_guids = []
-        return username, email, group_guids
+        roles = claims.get("roles", [])
+        if not isinstance(roles, list):
+            roles = []
+        return username, email, roles
 
-    def _get_user_role(self, group_guids: list[str]) -> str:
+    def _get_user_role(self, roles: list[str]) -> str:
         """
-        Map Azure AD group GUIDs to Airflow role using config. Return default_role if no match.
+        Pick the highest-authority Airflow role from the user's app roles.
+        Falls back to default_role if no matching roles found.
         """
-        for group in group_guids:
-            if group in self.group_role_map:
-                return self.group_role_map[group]
+        if "admin" in roles:
+            return "admin"
+        if "op" in roles:
+            return "op"
+        if "user" in roles:
+            return "user"
+        if "viewer" in roles:
+            return "viewer"
         return self.default_role
 
     def _derive_per_user_secret(self, username: str, role: str) -> bytes:
