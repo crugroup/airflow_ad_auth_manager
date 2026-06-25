@@ -407,7 +407,11 @@ class ADAuthManager(BaseAuthManager):
         return self._has_role(user, "op")
 
     def is_authorized_custom_view(self, *, method, resource_name, user=None):
-        return self._has_role(user, "viewer")
+        # Allow 'user' and above for read, 'op' and above for write
+        # resource_name is available for future per-plugin rules
+        if method == "GET":
+            return self._has_role(user, "user")
+        return self._has_role(user, "op")
 
     def is_authorized_dag(self, *, method, access_entity=None, details=None, user=None):
         # Allow 'user' and above for write, 'viewer' and above for read
